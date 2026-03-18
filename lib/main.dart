@@ -11,8 +11,11 @@ import 'core/theme.dart';
 import 'data/hive_service.dart';
 import 'logic/alarm_manager.dart';
 import 'logic/plan_provider.dart';
+import 'logic/internet_provider.dart';
+import 'logic/calendar_provider.dart';
 import 'ui/home_page.dart';
 import 'ui/alarm_page.dart';
+import 'ui/splash_screen_page.dart';
 
 // Global Navigation Key for background routing
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -40,7 +43,10 @@ void main() async {
   try {
     // 3. Core Service Initialization
     await Future.wait([
-      dotenv.load(fileName: ".env"),
+      // 🔥 Safe load: Prevents fatal crash if .env file is missing
+      dotenv.load(fileName: ".env").catchError((_) {
+        debugPrint("⚠️ .env file not found. Skipping or using defaults.");
+      }),
       HiveService.init(),
       AlarmService().init(),
     ]);
@@ -60,7 +66,8 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => PlanProvider()),
-        // Add more providers here easily in the future (e.g., ThemeProvider, AuthProvider)
+        ChangeNotifierProvider(create: (_) => InternetProvider()),
+        ChangeNotifierProvider(create: (_) => CalendarProvider()),
       ],
       child: const SmartRoutineApp(),
     ),
@@ -72,24 +79,22 @@ void _setupGlobalAlarmListener() {
   try {
     globalRingSubscription?.cancel();
 
-    // Using asBroadcastStream ensures Hot Reloads don't crash the engine
-    globalRingSubscription = Alarm.ringStream.stream.asBroadcastStream().listen(
-      (alarmSettings) {
-        debugPrint('⏰ Alarm Triggered: ID ${alarmSettings.id}');
+    // 🔥 FIX: Removed .asBroadcastStream() because ringStream is already a broadcast!
+    globalRingSubscription = Alarm.ringStream.stream.listen((alarmSettings) {
+      debugPrint('⏰ Alarm Triggered: ID ${alarmSettings.id}');
 
-        // 🔥 CRITICAL ADDITION: Tell the AlarmService which alarm is ringing
-        // so the AI Text-to-Speech knows what script to read!
-        AlarmService().setRingingAlarmData(
-          alarmSettings.id,
-          alarmSettings.notificationSettings.title,
-        );
+      // Tell the AlarmService which alarm is ringing
+      // so the AI Text-to-Speech knows what script to read!
+      AlarmService().setRingingAlarmData(
+        alarmSettings.id,
+        alarmSettings.notificationSettings.title,
+      );
 
-        // Push to the Alarm Page regardless of where the user is in the app
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (context) => const AlarmPage()),
-        );
-      },
-    );
+      // Push to the Alarm Page regardless of where the user is in the app
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (context) => const AlarmPage()),
+      );
+    });
   } catch (e) {
     debugPrint('⚠️ Alarm Stream handled a hot-reload state gracefully.');
   }
@@ -144,10 +149,20 @@ class _SmartRoutineAppState extends State<SmartRoutineApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       // The user just re-opened the app!
-      // Great place to refresh tasks, check for missed alarms, or update AI weather logic.
       debugPrint('📱 App Resumed: Refreshing Data...');
 
-      // Example: context.read<PlanProvider>().loadTasksForDate(DateTime.now());
+      // Force UI to refresh Tasks and Calendar events
+      // so if the user crosses midnight while the app is in the background,
+      // it correctly loads the new day's data!
+      final context = navigatorKey.currentContext;
+      if (context != null) {
+        final now = DateTime.now();
+        Provider.of<PlanProvider>(context, listen: false).loadTasksForDate(now);
+        Provider.of<CalendarProvider>(
+          context,
+          listen: false,
+        ).loadEventsForDate(now);
+      }
     }
   }
 
@@ -158,7 +173,8 @@ class _SmartRoutineAppState extends State<SmartRoutineApp>
       title: 'Smart Routine AI',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      home: const HomePage(),
+      home:
+          const SplashScreenPage(), // Renders your beautiful splash screen first
     );
   }
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'models/task_model.dart';
+import 'models/journal_model.dart'; // 🔥 NEW: Imported Journal Model
+import 'models/goal_model.dart'; // 🔥 NEW: Imported Goal Model
 import '../core/constants.dart';
 
 class HiveService {
@@ -11,14 +13,25 @@ class HiveService {
   static Future<void> init() async {
     await Hive.initFlutter();
 
-    // 1. Register Task Adapter
+    // 1. Register Adapters
     if (!Hive.isAdapterRegistered(0)) {
       Hive.registerAdapter(TaskAdapter());
+    }
+    // 🔥 NEW: Register Goal and Journal Adapters
+    if (!Hive.isAdapterRegistered(2)) {
+      Hive.registerAdapter(GoalAdapter());
+    }
+    if (!Hive.isAdapterRegistered(3)) {
+      Hive.registerAdapter(JournalEntryAdapter());
     }
 
     // 2. Open necessary boxes
     await Hive.openBox<Task>(AppConstants.taskBoxName);
     await Hive.openBox('settings'); // Box for AI voice and wake-up time
+
+    // 🔥 NEW: Open the Goal and Journal boxes
+    await Hive.openBox<Goal>('goalsBox');
+    await Hive.openBox<JournalEntry>('journalBox');
   }
 
   // --- TASK MANAGEMENT ---
@@ -89,5 +102,37 @@ class HiveService {
   Future<void> clearAllHistory() async {
     await _taskBox.clear();
     // Optional: await _settingsBox.clear(); // Uncomment if you want to reset settings too
+  }
+
+  // --- WAKE-UP PROTOCOL SETTINGS ---
+  Future<void> saveWakeupPhrase(String phrase) async {
+    var box = Hive.box('settings'); // Ensure you have a settings box opened
+    await box.put('wakeupPhrase', phrase.toLowerCase());
+  }
+
+  String getWakeupPhrase() {
+    var box = Hive.box('settings');
+    return box.get('wakeupPhrase', defaultValue: 'thank you smart');
+  }
+
+  Future<void> saveStrictness(double value) async {
+    var box = Hive.box('settings');
+    await box.put('strictness', value);
+  }
+
+  double getStrictness() {
+    var box = Hive.box('settings');
+    return box.get('strictness', defaultValue: 7.5);
+  }
+
+  // --- USER PROFILE SETTINGS ---
+  Future<void> saveUserName(String name) async {
+    var box = Hive.box('settings');
+    await box.put('userName', name);
+  }
+
+  String getUserName() {
+    var box = Hive.box('settings');
+    return box.get('userName', defaultValue: 'Friend'); // Default fallback
   }
 }

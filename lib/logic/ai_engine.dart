@@ -1,12 +1,15 @@
-import 'package:flutter/material.dart'; // Added for debugPrint
+import 'dart:math';
+import 'package:flutter/material.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../data/models/task_model.dart';
 import '../core/api_client.dart';
 import '../core/constants.dart';
 import '../core/network_info.dart';
-import 'calendar_service.dart'; // 🔥 NEW: Import the Calendar Service
-import 'package:hive_flutter/hive_flutter.dart';
+import 'calendar_service.dart';
+import '../data/hive_service.dart';
+import '../data/models/goal_model.dart';
 
 class AIEngine {
   final ApiClient _apiClient = ApiClient();
@@ -32,7 +35,6 @@ class AIEngine {
 
   /// Turns coordinates into a City Name for a personal touch
   Future<String> _getCityName(double lat, double lon) async {
-    // 🔥 OFFLINE CHECK: Geocoding requires internet
     bool hasInternet = await NetworkInfo.isConnected;
     if (!hasInternet) return "your area";
 
@@ -53,7 +55,6 @@ class AIEngine {
     double temp = 25.0;
     int isRaining = 0;
 
-    // 🔥 OFFLINE CHECK: Only fetch weather if connected
     bool hasInternet = await NetworkInfo.isConnected;
 
     if (hasInternet) {
@@ -73,7 +74,6 @@ class AIEngine {
     int taskType = _categorizeTask(task.description);
     double hour = task.scheduledTime.hour + (task.scheduledTime.minute / 60.0);
 
-    // TFLite runs 100% offline using whatever temp/rain data we provided
     var input = [
       [taskType.toDouble(), hour, temp, isRaining.toDouble()],
     ];
@@ -84,62 +84,64 @@ class AIEngine {
       double prob = output[0][0];
       int score = (prob * 100).round();
 
-      if (score > 75)
-        return "Great timing! High success probability ($score%).";
-      if (score < 40)
-        return "Caution: Success probability is low ($score%). Weather or timing may interfere.";
-      return "Looks good. Moderate success chance ($score%).";
+      // 🔥 UPDATED: Highly actionable, professional AI advice
+      if (score >= 75) {
+        return "High success probability ($score%). Conditions are optimal. Advice: Capitalize on this momentum and execute the task exactly as planned.";
+      } else if (score <= 40) {
+        return "Low success probability ($score%). Warning: You are likely to face resistance here due to timing or conditions. Advice: Break this task into 10-minute micro-steps, eliminate all digital distractions, and prepare yourself mentally.";
+      } else {
+        return "Moderate success chance ($score%). The conditions are fair. Advice: Stay disciplined, put your phone out of reach, and push through the initial friction to get it done.";
+      }
     } catch (e) {
-      return "Analysis unavailable.";
+      return "Analysis unavailable. Advice: Trust your discipline today.";
     }
   }
 
-  /// 🌟 NEW: Daily Motivational & Faith-Based Quotes
-  String _getDailyMotivationalQuote() {
+  /// 🌟 UPGRADED: Personalized & Faith-Based Quotes
+  String _getDailyMotivationalQuote(String userName) {
     int weekday = DateTime.now().weekday;
+    String nameToUse = userName.isEmpty ? "my friend" : userName;
 
     switch (weekday) {
       case 1: // Monday
-        return "Happy Monday! Step out with confidence and set the tone for the week. Remember, God got you, and He will always be good.";
+        return "Happy Monday, $nameToUse! Step out with confidence and set the tone for the week. Remember, Jesus Christ got you, and He will always be good.";
       case 2: // Tuesday
-        return "Happy Tuesday! Keep your momentum going strong. No matter the hurdles, God got you, and He will always be good.";
+        return "Happy Tuesday, $nameToUse! Keep your momentum going strong. No matter the hurdles, Jesus Christ got you, and He will always be good.";
       case 3: // Wednesday
-        return "Happy Wednesday! You are halfway through the week. Keep pushing forward, trusting that God got you, and He will always be good.";
+        return "Happy Wednesday, $nameToUse! You are halfway through the week. Keep pushing forward, trusting that Jesus Christ got you, and He will always be good.";
       case 4: // Thursday
-        return "Happy Thursday! Stay focused and finish your tasks with excellence. Be encouraged today; God got you, and He will always be good.";
+        return "Happy Thursday, $nameToUse! Stay focused and finish your tasks with excellence. Be encouraged today; Jesus Christ got you, and He will always be good.";
       case 5: // Friday
-        return "Happy Friday! Finish strong and look back at what you've achieved. Rejoice, because God got you, and He will always be good.";
+        return "Happy Friday, $nameToUse! Finish strong and look back at what you've achieved. Rejoice, because Jesus Christ got you, and He will always be good.";
       case 6: // Saturday
-        return "Happy Saturday! Take time to execute your plans and also find moments of rest. Breathe easy, God got you, and He will always be good.";
+        return "Happy Saturday, $nameToUse! Take time to execute your plans and also find moments of rest. Breathe easy, Jesus Christ got you, and He will always be good.";
       case 7: // Sunday
-        return "Happy Sunday! Reflect, recharge, and prepare your heart and mind. Walk in peace today, knowing God got you, and He will always be good.";
+        return "Happy Sunday, $nameToUse! Reflect, recharge, and prepare your heart and mind. Walk in peace today, knowing Jesus Christ got you, and He will always be good.";
       default:
-        return "Have a wonderful day! Remember, God got you, and He will always be good.";
+        return "Have a wonderful day, $nameToUse! Remember, Jesus Christ got you, and He will always be good.";
     }
   }
 
-  /// BRIEFING GENERATION: Triggered when you tap "STOP" on the AlarmPage
+  /// 🌟 UPGRADED: Personalized Morning Briefing
   Future<String> generateMorningBriefing(
     List<Task> todaysTasks,
     double lat,
     double lon,
   ) async {
-    // Grab today's specific motivational quote
-    String dailyMotivation = _getDailyMotivationalQuote();
+    String userName = HiveService().getUserName();
+    String dailyMotivation = _getDailyMotivationalQuote(userName);
 
-    // 🔥 NEW: Fetch offline Google Calendar events
     final calendarService = CalendarService();
     final calendarEvents = await calendarService.getEventsForDate(
       DateTime.now(),
     );
+
     if (todaysTasks.isEmpty && calendarEvents.isEmpty) {
       return "Good morning! You have a clear schedule today. $dailyMotivation";
     }
 
-    // 🔥 OFFLINE CHECK: Gatekeeper for the briefing
     bool hasInternet = await NetworkInfo.isConnected;
 
-    // 1. Get Contextual Data (Safely bypass if offline)
     String cityName = "your area";
     String weatherContext = "the weather is stable";
     double currentTemp = 25.0;
@@ -158,16 +160,12 @@ class AIEngine {
       } catch (e) {
         debugPrint("Briefing weather error: $e");
       }
-    } else {
-      debugPrint("📴 OFFLINE: Bypassing network calls for Morning Briefing.");
     }
 
-    // 2. Prepare the Schedule Summary integrating Calendar + Tasks
     String scheduleSummary = "";
     String firstActivityName = "";
     String firstActivityTime = "";
 
-    // Determine what happens first: A Task or a Calendar Event?
     if (calendarEvents.isNotEmpty && todaysTasks.isNotEmpty) {
       scheduleSummary =
           "You have ${todaysTasks.length} personal tasks and ${calendarEvents.length} calendar events today. ";
@@ -188,15 +186,13 @@ class AIEngine {
           "${todaysTasks.first.scheduledTime.hour}:${todaysTasks.first.scheduledTime.minute.toString().padLeft(2, '0')}";
     }
 
-    // 3. AI Prediction Advice (Runs offline perfectly)
     await _initModel();
     String aiAdvice = "";
     if (_interpreter != null) {
       var input = [
         [
           _categorizeTask(firstActivityName).toDouble(),
-          (DateTime.now().hour)
-              .toDouble(), // Approximation based on current time
+          (DateTime.now().hour).toDouble(),
           currentTemp,
           isRaining ? 1.0 : 0.0,
         ],
@@ -212,7 +208,6 @@ class AIEngine {
       }
     }
 
-    // 4. Construct final speech (combining schedule + AI advice + daily motivation)
     if (hasInternet) {
       return "Good morning! In $cityName, it is currently $weatherContext. "
           "$scheduleSummary "
@@ -220,7 +215,6 @@ class AIEngine {
           "$aiAdvice "
           "$dailyMotivation";
     } else {
-      // Shorter, offline-specific briefing
       return "Good morning! You are currently offline, but $scheduleSummary "
           "Your first activity is $firstActivityName at $firstActivityTime. "
           "$aiAdvice "
@@ -228,23 +222,25 @@ class AIEngine {
     }
   }
 
-  /// 🌟 NEW: The Sunday Evening Weekly Strategy Review
+  /// 🌟 UPGRADED: Humanized & Faith-Based Strategy Review
   Future<String> generateWeeklyStrategyReview() async {
     try {
       final box = Hive.box<Task>(AppConstants.taskBoxName);
       final now = DateTime.now();
       final oneWeekAgo = now.subtract(const Duration(days: 7));
 
-      // 1. Get only tasks from the last 7 days that were actually completed or failed
+      String userName = HiveService().getUserName();
+      String nameToUse = userName.isEmpty ? "my friend" : userName;
+
       final weeklyTasks = box.values.where((t) {
         return t.scheduledTime.isAfter(oneWeekAgo) && t.isSuccessful != null;
       }).toList();
 
       if (weeklyTasks.isEmpty) {
-        return "Good evening! It looks like you didn't track any tasks this week. Let's set some goals and start fresh tomorrow!";
+        return "Good evening, $nameToUse. I noticed you took a break from tracking this week. "
+            "Rest is important, but let's pray for a productive week ahead and start fresh tomorrow.";
       }
 
-      // 2. Tally up the categories
       int totalPhysical = 0, successPhysical = 0;
       int totalMental = 0, successMental = 0;
       int totalChores = 0, successChores = 0;
@@ -265,7 +261,6 @@ class AIEngine {
         }
       }
 
-      // 3. Calculate overall and categorical success rates
       int totalSuccess = successPhysical + successMental + successChores;
       int overallRate = ((totalSuccess / weeklyTasks.length) * 100).round();
 
@@ -275,49 +270,122 @@ class AIEngine {
       double mentalRate = totalMental == 0 ? 1.0 : successMental / totalMental;
       double choresRate = totalChores == 0 ? 1.0 : successChores / totalChores;
 
-      // 4. Generate the dynamic coaching script
-      String intro =
-          "Good evening. It is time for your weekly strategy review. "
-          "You tackled ${weeklyTasks.length} tasks this week and achieved an overall success rate of $overallRate percent. ";
+      // 1. Humanized, dynamic greetings
+      final List<String> greetings = [
+        "Good evening, $nameToUse. It is time for our weekly review. ",
+        "Hello $nameToUse. Let's take a moment to reflect on your week. ",
+        "Welcome to your Sunday review, $nameToUse. I've been analyzing your progress. ",
+      ];
+      String intro = greetings[Random().nextInt(greetings.length)];
+      intro +=
+          "You accomplished $totalSuccess out of ${weeklyTasks.length} tasks, giving you a $overallRate percent success rate. ";
 
+      // 2. Empathetic Analysis
       String analysis = "";
-      String advice = "";
+      if (overallRate >= 80) {
+        analysis =
+            "You had a truly blessed and highly productive week. Your dedication to your goals is inspiring. ";
+      } else if (overallRate >= 50) {
+        analysis =
+            "You did good work this week, but I know you have the potential for even more. Don't be discouraged by the tasks you missed. ";
+      } else {
+        analysis =
+            "It looks like this was a challenging week for you. Please don't be too hard on yourself. Every week is a new opportunity to learn and grow. ";
+      }
 
-      // Find the weakest link to offer advice
+      // Practical Advice
+      String advice = "";
       if (mentalRate <= physicalRate &&
           mentalRate <= choresRate &&
           totalMental > 0 &&
           mentalRate < 0.7) {
-        analysis =
-            "You did well overall, but I noticed you struggled a bit with your focus and study tasks. ";
         advice =
             "Next week, let's try the Pomodoro technique. Break your deep work into 25-minute sprints to keep your brain fresh. ";
       } else if (physicalRate <= mentalRate &&
           physicalRate <= choresRate &&
           totalPhysical > 0 &&
           physicalRate < 0.7) {
-        analysis = "You had a solid week, but your fitness goals took a hit. ";
         advice =
-            "Next week, try laying out your workout clothes the night before, or schedule your physical tasks earlier in the day when you have more energy. ";
+            "Next week, try laying out your workout clothes the night before to help with your physical tasks. ";
       } else if (choresRate < 0.7) {
-        analysis =
-            "Your heavy lifting is getting done, but your daily chores are slipping. ";
         advice =
-            "Try grouping all your chores into one 45-minute block on Saturday morning to free up the rest of your week. ";
+            "Try grouping all your chores into one block on Saturday morning to free up the rest of your week. ";
       } else {
-        analysis =
-            "You absolutely crushed it across the board this week! Your consistency is highly impressive. ";
         advice =
             "Your current strategy is working perfectly. Keep this exact momentum going into tomorrow. ";
       }
 
-      String outro =
-          "Take this evening to rest, recharge, and prepare your mind. Remember, God's got you, and He will always be good.";
+      // 3. Faith-Based Wisdom (Scriptures)
+      final List<String> scriptures = [
+        "Remember Proverbs 16 verse 3: Commit thy works unto the Lord, and thy thoughts shall be established.",
+        "As you prepare for tomorrow, remember Philippians 4 verse 13: I can do all things through Christ which strengtheneth me.",
+        "Keep Alma chapter 37 verse 37 in your heart: Counsel with the Lord in all thy doings, and he will direct thee for good.",
+        "Take comfort in Isaiah 40 verse 31: But they that wait upon the Lord shall renew their strength.",
+        "Remember Doctrine and Covenants section 58 verse 27: Men should be anxiously engaged in a good cause, and do many things of their own free will.",
+      ];
 
-      return intro + analysis + advice + outro;
+      String spiritualWord = scriptures[Random().nextInt(scriptures.length)];
+
+      String outro =
+          "$advice $spiritualWord Take time to rest tonight. God bless you, and I will be here to wake you up tomorrow.";
+
+      return intro + analysis + outro;
     } catch (e) {
       debugPrint("Weekly Review Error: $e");
-      return "Good evening. I couldn't access your weekly data, but take time to rest and recharge for tomorrow.";
+      String userName = HiveService().getUserName();
+      return "Good evening, ${userName.isEmpty ? "my friend" : userName}. I couldn't access your data, but remember that God loves you. Rest well tonight.";
     }
+  }
+
+  /// 🌟 NEW: Goal Alignment Checker
+  String checkGoalAlignment(List<Task> weeklyTasks, List<Goal> activeGoals) {
+    if (activeGoals.isEmpty || weeklyTasks.isEmpty) return "";
+
+    // Simple keyword extraction to check for alignment
+    int alignedTasks = 0;
+    int distractionTasks = 0;
+
+    // Words that typically signal procrastination or misaligned time-sinks
+    final distractionKeywords = [
+      'game',
+      'netflix',
+      'scroll',
+      'tv',
+      'movie',
+      'chill',
+      'party',
+    ];
+
+    for (var task in weeklyTasks) {
+      String desc = task.description.toLowerCase();
+
+      // Check if it matches a distraction
+      if (distractionKeywords.any((word) => desc.contains(word))) {
+        distractionTasks++;
+        continue;
+      }
+
+      // Check if it matches a goal keyword
+      for (var goal in activeGoals) {
+        // Look for matching words between the daily task and the long-term goal
+        List<String> goalWords = goal.title
+            .toLowerCase()
+            .split(' ')
+            .where((w) => w.length > 3)
+            .toList();
+        if (goalWords.any((word) => desc.contains(word))) {
+          alignedTasks++;
+          break;
+        }
+      }
+    }
+
+    if (distractionTasks > alignedTasks && distractionTasks > 3) {
+      return "I noticed you spent a lot of time on low-yield activities this week. Remember your big vision: ${activeGoals.first.title}. Let's refocus our daily tasks to match that milestone. ";
+    } else if (alignedTasks >= 3) {
+      return "Excellent alignment! Your daily actions are directly driving you toward your milestone: ${activeGoals.first.title}. Keep laying those bricks. ";
+    }
+
+    return "";
   }
 }

@@ -2,9 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import '../logic/alarm_manager.dart'; // Make sure this matches your path to AlarmService!
+import '../logic/alarm_manager.dart';
 import '../core/theme.dart';
 import '../data/hive_service.dart';
+import 'home_page.dart'; // 🔥 NEW: Import the Home Page
 
 class AlarmPage extends StatefulWidget {
   const AlarmPage({Key? key}) : super(key: key);
@@ -23,11 +24,23 @@ class _AlarmPageState extends State<AlarmPage>
   bool _isListening = false;
   String _spokenWords = "";
 
+  // State variables to hold custom settings
+  String _targetPhrase = "thank you smart";
+  double _targetStrictness = 7.5;
+
+  // State variables for Speech Error Handling
+  String _speechFeedback = "";
+  bool _hasSpeechError = false;
+
   late AnimationController _animationController;
 
   @override
   void initState() {
     super.initState();
+
+    // Fetch custom user settings
+    _targetPhrase = HiveService().getWakeupPhrase();
+    _targetStrictness = HiveService().getStrictness();
 
     // 1. Check if this is the morning wake-up alarm
     _checkIfWakeUpAlarm();
@@ -45,12 +58,10 @@ class _AlarmPageState extends State<AlarmPage>
   }
 
   void _checkIfWakeUpAlarm() {
-    // Grab the target wake-up time the user set in Settings
     final wakeupTime =
         HiveService().getWakeupTime() ?? const TimeOfDay(hour: 7, minute: 0);
     final now = DateTime.now();
 
-    // If the alarm is ringing within 5 minutes of their target wake-up time, enforce Strict Mode!
     if (now.hour == wakeupTime.hour &&
         (now.minute - wakeupTime.minute).abs() <= 5) {
       setState(() => _isWakeUpAlarm = true);
@@ -59,8 +70,29 @@ class _AlarmPageState extends State<AlarmPage>
 
   void _initSpeech() async {
     await _speechToText.initialize(
-      onError: (val) => debugPrint("Speech Error: $val"),
-      onStatus: (val) => debugPrint("Speech Status: $val"),
+      onError: (val) {
+        debugPrint("Speech Error: ${val.errorMsg}");
+        if (mounted) {
+          setState(() {
+            _hasSpeechError = true;
+            _isListening = false;
+
+            if (val.errorMsg.contains('timeout')) {
+              _speechFeedback = "Speech timeout. Please speak up louder.";
+            } else if (val.errorMsg.contains('busy')) {
+              _speechFeedback = "Microphone is busy. Resetting...";
+            } else {
+              _speechFeedback = "Couldn't hear you clearly. Try again.";
+            }
+          });
+        }
+      },
+      onStatus: (val) {
+        debugPrint("Speech Status: $val");
+        if (val == 'notListening' || val == 'done') {
+          if (mounted) setState(() => _isListening = false);
+        }
+      },
     );
   }
 
@@ -68,7 +100,7 @@ class _AlarmPageState extends State<AlarmPage>
     _accelerometerSubscription = accelerometerEventStream().listen((
       AccelerometerEvent event,
     ) {
-      bool isCurrentlyUpright = event.y > 7.5;
+      bool isCurrentlyUpright = event.y > _targetStrictness;
 
       if (isCurrentlyUpright && !_isUpright) {
         setState(() => _isUpright = true);
@@ -82,15 +114,18 @@ class _AlarmPageState extends State<AlarmPage>
 
   void _startListening() async {
     if (!_isListening && _speechToText.isAvailable) {
-      setState(() => _isListening = true);
+      setState(() {
+        _isListening = true;
+        _hasSpeechError = false;
+        _speechFeedback = "";
+      });
+
       _speechToText.listen(
         onResult: (result) {
           setState(() {
             _spokenWords = result.recognizedWords.toLowerCase();
 
-            // 🔥 UPDATED: Now listens for "THANK YOU SMART"
-            if (_spokenWords.contains("thank you smart") ||
-                _spokenWords.contains("thanks smart")) {
+            if (_spokenWords.contains(_targetPhrase)) {
               _triggerSuccess();
             }
           });
@@ -106,20 +141,35 @@ class _AlarmPageState extends State<AlarmPage>
     }
   }
 
+  // 🔥 UPDATED: Professional routing to avoid the "Dark Screen"
   void _triggerSuccess() async {
     if (_isWakeUpAlarm) {
       _stopListening();
       _accelerometerSubscription?.cancel();
     }
 
-    // Stop the alarm and trigger the AI Morning Briefing
-    await AlarmService().stopActiveAlarmAndSpeak(
-      0.0,
-      0.0,
-    ); // Pass real GPS coords if you have them!
+    // 1. Give immediate UI feedback
+    setState(() {
+      _spokenWords = "Good morning! Preparing your dashboard...";
+    });
 
+    // 2. Stop the alarm and trigger the AI Morning Briefing
+    await AlarmService().stopActiveAlarmAndSpeak(0.0, 0.0);
+
+    // 3. Professionally fade into the Home Page and destroy back history
     if (mounted) {
-      Navigator.pop(context);
+      Navigator.pushAndRemoveUntil(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const HomePage(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          transitionDuration: const Duration(milliseconds: 800),
+        ),
+        (route) => false,
+      );
     }
   }
 
@@ -224,10 +274,9 @@ class _AlarmPageState extends State<AlarmPage>
                 ),
                 const SizedBox(height: 16),
 
-                // 🔥 UPDATED TEXT INSTRUCTIONS
                 Text(
                   _isUpright
-                      ? "Say loudly:\n\"THANK YOU SMART!\""
+                      ? "Say loudly:\n\"${_targetPhrase.toUpperCase()}!\""
                       : "Stand up and hold your phone straight up to activate the microphone.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
@@ -238,22 +287,53 @@ class _AlarmPageState extends State<AlarmPage>
                 const SizedBox(height: 40),
 
                 if (_isUpright)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _spokenWords.isEmpty
-                          ? "Listening..."
-                          : 'I heard: "$_spokenWords"',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontStyle: FontStyle.italic,
+                  Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: _hasSpeechError
+                              ? Colors.red.withOpacity(0.2)
+                              : Colors.black26,
+                          borderRadius: BorderRadius.circular(12),
+                          border: _hasSpeechError
+                              ? Border.all(color: Colors.redAccent)
+                              : null,
+                        ),
+                        child: Text(
+                          _hasSpeechError
+                              ? _speechFeedback
+                              : (_spokenWords.isEmpty
+                                    ? "Listening..."
+                                    : 'I heard: "$_spokenWords"'),
+                          style: TextStyle(
+                            color: _hasSpeechError
+                                ? Colors.redAccent.shade100
+                                : Colors.white70,
+                            fontStyle: FontStyle.italic,
+                            fontWeight: _hasSpeechError
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
-                      textAlign: TextAlign.center,
-                    ),
+
+                      if (_hasSpeechError) ...[
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white24,
+                          ),
+                          icon: const Icon(Icons.refresh, color: Colors.white),
+                          label: const Text(
+                            "Retry Microphone",
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          onPressed: _startListening,
+                        ),
+                      ],
+                    ],
                   ),
 
                 const Spacer(),

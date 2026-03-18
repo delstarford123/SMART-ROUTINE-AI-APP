@@ -3,7 +3,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter/material.dart';
 import '../data/hive_service.dart';
 import '../data/models/task_model.dart';
-import '../main.dart';
+import '../main.dart'; // Ensure this points correctly to where your global alarm listener is
 import '../ui/alarm_page.dart';
 import 'ai_engine.dart';
 
@@ -76,7 +76,8 @@ class AlarmService {
     final alarmSettings = AlarmSettings(
       id: id,
       dateTime: time,
-      assetAudioPath: 'assets/alarm2.wav',
+      assetAudioPath:
+          'assets/alarm2.wav', // A different sound for task completion
       loopAudio: true,
       vibrate: true,
       warningNotificationOnKill: true,
@@ -92,15 +93,12 @@ class AlarmService {
   }
 
   Future<void> scheduleStartAndEndAlarms(Task task) async {
-    // 🚨 FIX: Guaranteed positive integer > 1
-    // By taking absolute value and adding 10, it will NEVER be 0,
-    // and will NEVER collide with the WakeUpAlarm (ID: 1).
-    final int startId =
-        (task.scheduledTime.millisecondsSinceEpoch % 100000).abs() + 10;
+    // 🔥 CRITICAL FIX: Align IDs with PlanProvider so cancellations work perfectly!
+    // We ensure the ID isn't 0 or 1 (WakeUp) just to be absolutely safe.
+    final int startId = task.alarmId < 10 ? task.alarmId + 10 : task.alarmId;
     final int endId = startId + 1;
 
-    final endTime = task.scheduledTime.add(const Duration(hours: 1));
-
+    // 1. Schedule the Start Alarm
     await Alarm.set(
       alarmSettings: AlarmSettings(
         id: startId,
@@ -117,7 +115,22 @@ class AlarmService {
       ),
     );
 
+    // 2. Schedule the End Alarm (🔥 FIX: Uses explicit endTime!)
+    final DateTime endTime =
+        task.endTime ?? task.scheduledTime.add(const Duration(hours: 1));
     await setTaskEndTimeAlarm(endTime, endId, task.description);
+  }
+
+  // --- 🔥 NEW: GHOST ALARM CLEANUP ---
+
+  /// Instantly cancels a specific scheduled alarm to prevent it from ringing
+  /// after a task is completed early, skipped, or deleted.
+  Future<void> cancelAlarm(int id) async {
+    try {
+      await Alarm.stop(id);
+    } catch (e) {
+      debugPrint("Alarm Service: Could not cancel alarm ID $id. $e");
+    }
   }
 
   // --- EVENT HANDLING ---
